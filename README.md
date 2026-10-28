@@ -1,26 +1,18 @@
-<div align="center">
-<img alt="logo" height="120" src="./public/favicon.png" width="120"/>
-<h2>今日热榜</h2>
-<p>一个聚合热门数据的 API 接口</p>
-</div>
+# HotAPI · Vercel Gateway
 
-## 🚩 特性
+Official hostname: **`hotapi.wuaishare.cn`**. Vercel project: **`hotapi`**.
 
-- 极快响应，便于开发
-- 支持 RSS 模式和 JSON 模式
-- 支持多种部署方式
-- 简明的路由目录，便于新增
+This repository defines the edge-facing **gateway**, not an independently running scraper. It forwards the incoming URL path and query to the maintained `hotapi2.wuaishare.cn` service (currently bt1), preserving the modern API routes. No legacy `dailyhot-api@2.0.6` process, build script, or stale response data is used. **If bt1 or hotapi2 is down, this gateway is also down.**
 
-## 👀 主仓库
+## Deploy and verify
 
-本仓库仅用于 `Vercel` 部署，更多信息请请前往 [DailyHotApi](https://github.com/imsyy/DailyHotApi)
+- Production branch: `master`; review isolated PRs and test the Vercel Preview first.
+- Deploy `master` through the Vercel Git integration; verify the exact deployment SHA and promotion before changing Cloudflare DNS.
+- Test `/`, `/all`, `/artificialanalysis?type=models`, and other important routes against the known-good `hotapi2` source. Confirm query strings, JSON payload freshness, status codes and response headers.
+- Static marker: `/_hotapi-gateway/health.json` identifies the gateway deployment even if the upstream is failing; this is **not** an upstream health check.
+- Cloudflare's current DNS/Origin Rules must be inspected and changed to the Vercel target for `hotapi.wuaishare.cn`. Adding a Vercel project domain alone does not switch traffic.
+- Keep `hotapi2` on bt1 unchanged until the gateway has passed cross-device production acceptance and rollback is available.
 
-## ⚙️ 部署
+## Safeguards
 
-通过点击下方按钮进行一键部署，或者手动进行部署
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/imsyys-projects/clone?repository-url=https%3A%2F%2Fgithub.com%2Fimsyy%2FDailyHotApi-Vercel)
-
-## ⚙️ 自动更新
-
-本仓库使用 [GitHub Actions]([/actions](https://github.com/imsyy/DailyHotApi-Vercel/actions)) 自动更新拉取最新版本，每天 0:00 更新，可在工作流中手动开启
+The rewrite target is a **single hard-coded HTTPS host**. There is no user-supplied target, no proxy credential forwarding code, no artificial caching, no credentials in this repository, and no service or DNS mutation by the test scripts. Existing frontend readers should continue using `hotapi2` until the new domain is accepted. Verify CDN/WAF forward-header provenance separately; never trust caller-provided real-IP headers for authentication.
