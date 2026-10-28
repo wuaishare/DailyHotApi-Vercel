@@ -1,0 +1,6 @@
+{
+  "service": "hotapi",
+  "kind": "vercel-edge-gateway",
+  "productionDomain": "hotapi.wuaishare.cn",
+  "upstreamHealthAttested": false
+}
