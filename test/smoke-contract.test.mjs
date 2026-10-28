@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TARGETS, PATHS, checkResponse } from "../ops/smoke-hotapi.mjs";
+import { TARGETS, PATHS, checkResponse, classifyErrorBody } from "../ops/smoke-hotapi.mjs";
 
 test("only known public hosts and routes are monitored", () => {
   assert.deepEqual(Object.values(TARGETS), [
@@ -29,4 +29,13 @@ test("rank responses must carry actual rows", () => {
   assert.throws(() => checkResponse("/ai-topic?type=all", {code:200, data:[], total:100}), /missing/);
   assert.throws(() => checkResponse("/ai-topic?type=all", {code:403, data:[{}], total:1}), /not 200/);
   assert.throws(() => checkResponse("/ai-topic?type=all", "<html>403</html>"), /non-object/);
+});
+
+test("403 response fingerprints classify known challenge and server bodies without logging content", () => {
+  assert.equal(classifyErrorBody("<html><title>403 Forbidden</title></html>"), "nginx-style-403");
+  assert.equal(classifyErrorBody('<script src="/cdn-cgi/challenge-platform/challenge.js"></script>'), "cloudflare-challenge");
+  assert.equal(classifyErrorBody("any body", "challenge"), "cloudflare-challenge");
+  assert.equal(classifyErrorBody("btwaf rejected"), "btwaf-intercept");
+  assert.equal(classifyErrorBody('{"code":403}'), "json-error");
+  assert.equal(classifyErrorBody("something unknown"), "unclassified");
 });
