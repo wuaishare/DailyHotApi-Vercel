@@ -13,6 +13,26 @@ This repository defines the edge-facing **gateway**, not an independently runnin
 - Cloudflare's current DNS/Origin Rules must be inspected and changed to the Vercel target for `hotapi.wuaishare.cn`. Adding a Vercel project domain alone does not switch traffic.
 - Keep `hotapi2` on bt1 unchanged until the gateway has passed cross-device production acceptance and rollback is available.
 
+## Verified production configuration (2026-10-28)
+
+- Official DNS: Cloudflare **DNS only** (gray cloud), `hotapi.wuaishare.cn CNAME c6911e08ed0da18f.vercel-dns-017.com`. Vercel `get_domain_config` reported `misconfigured=false` and `configuredBy=CNAME`.
+- Exact production commit: `7fa939187bd9fad03f157e7872073448bd22c643`; project `hotapi` (`prj_kr9nUtKfm6Ap4WBFx9B6a4vyxT1k`); Vercel deployment `dpl_5Kq3EYqcofmecorLPydprJMNfdSz`.
+- A separate Let's Encrypt certificate for `hotapi.wuaishare.cn` was verified from independent bt1 egress on 2026-10-28. Locally observed `198.18.x.x` addresses on M4/MBP are local DNS/proxy artifacts, **not** Vercel's publicly assigned IPs.
+- Independent bt1 checks of the public domain and Vercel default domain showed HTTP 200 / strict TLS. Live gateway identity, 179-route catalog, AA model leaderboard and AI topic leaderboard also returned usable data from M4 and MBP.
+- **Remaining P1:** intermittent 525/403 has been observed on public API requests, particularly after Vercel forwards to the Cloudflare-proxied `hotapi2` backend; the precise cause is not yet proven. A static edge identity response is not sufficient to attest backend health. Do not loosen Cloudflare WAF/CC or trust forged client-IP headers to conceal this problem.
+- Legacy `dailyhotapi.wuaishare.cn` remains a separately misconfigured Cloudflare entry (sporadic 502/403). **Do not advertise it**. After verifying historical usage, convert it to an intentional canonical redirect or retire it without affecting the now-healthy `hotapi` route.
+
+### Repeatable availability tests
+
+```bash
+node --test test/*.test.mjs
+node ops/smoke-hotapi.mjs
+```
+
+The credential-free smoke command checks the Vercel marker, gateway and upstream `/all`, Artificial Analysis and AI-topic routes using strict HTTPS and real JSON payload assertions. It records response status, Cloudflare Ray and Vercel edge ID on failures. A failed first attempt is retried once; recovered transients are reported distinctly and repeated failures make the command fail.
+
+A best-effort GitHub Actions scheduled smoke (`.github/workflows/hotapi-public-smoke.yml`) runs every three hours plus manual dispatch. GitHub scheduled Actions are not guaranteed to fire at a specific time and are **not** a substitute for a dedicated external uptime monitor.
+
 ## Safeguards
 
 The rewrite target is a **single hard-coded HTTPS host**. There is no user-supplied target, no proxy credential forwarding code, no artificial caching, no credentials in this repository, and no service or DNS mutation by the test scripts. Existing frontend readers should continue using `hotapi2` until the new domain is accepted. Verify CDN/WAF forward-header provenance separately; never trust caller-provided real-IP headers for authentication.
