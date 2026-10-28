@@ -5,6 +5,7 @@
  * A READY Vercel deployment or a 200 static health marker is not API health.
  */
 import { appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -47,6 +48,18 @@ export function checkResponse(path, value, headers = {}) {
   return String(value.total) + " rows";
 }
 
+/** Classify an error from safe response signatures; never print or store raw bodies. */
+export function classifyErrorBody(body, cfMitigated = "") {
+  const text = String(body || "").slice(0, 4096).toLowerCase();
+  if (cfMitigated === "challenge" || text.includes("/cdn-cgi/challenge-platform") ||
+      text.includes("cf-chl")) return "cloudflare-challenge";
+  if (text.includes("btwaf") || text.includes("宝塔防火墙")) return "btwaf-intercept";
+  if (text.includes("<h1>403 forbidden</h1>") || text.includes("<title>403 forbidden</title>"))
+    return "nginx-style-403";
+  if (text.trimStart().startsWith("{")) return "json-error";
+  return "unclassified";
+}
+
 async function fetchOne(base, path, expectVercel) {
   const response = await fetch(base + path, {
     signal: AbortSignal.timeout(15000),
@@ -59,7 +72,18 @@ async function fetchOne(base, path, expectVercel) {
     "cfRay=" + (response.headers.get("cf-ray") || "-"),
     "vercelId=" + (response.headers.get("x-vercel-id") || "-"),
   ].join(" ");
-  if (!response.ok) throw new Error(diagnostic);
+  if (!response.ok) {
+    const body = await response.text();
+    const mitigated = response.headers.get("cf-mitigated") || "-";
+    const fingerprint = createHash("sha256").update(body).digest("hex").slice(0, 12);
+    // No raw response body, cookies, secrets, or visitor addresses in logs.
+    throw new Error(diagnostic +
+      " cfMitigated=" + mitigated +
+      " contentType=" + (response.headers.get("content-type") || "-") +
+      " bodyType=" + classifyErrorBody(body, mitigated) +
+      " bodyBytes=" + Buffer.byteLength(body) +
+      " bodySha256=" + fingerprint);
+  }
   if (!(response.headers.get("content-type") || "").includes("json")) {
     throw new Error("non-JSON content-type " + diagnostic);
   }
