@@ -1,0 +1,198 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createStandbyHandler} from '../api/standby.js';
+import deployedSeed from '../lib/standby-seed.js';
+import {
+  SOURCE_VARIANTS, choosePublicVariant, snapshotUrl, validPublicPayload,
+  validSnapshot, sanitizeUpstreamPathQuery,
+} from '../lib/standby-core.js';
+import {captureAll, captureSource} from '../ops/capture-standby.mjs';
+
+const current = Date.parse('2026-11-11T01:00:00Z');
+const body = (source = 'douyin') => ({
+  code:200,name:source,total:25,updateTime:new Date(current-600000).toISOString(),
+  data:Array.from({length:25},(_,i)=>({id:String(i+1),title:'Ranked headline '+i,
+    url:'https://example.org/topic/'+(i+1)})),
+});
+const makeSnapshot = (source = 'douyin') => ({
+  schema:'hotapi-cloud-snapshot-v1',source,variant:SOURCE_VARIANTS[source],
+  capturedAt:new Date(current-300000).toISOString(),payload:body(source),
+});
+const reply = (json,status=200,ctype='application/json') =>
+  new Response(typeof json==='string'?json:JSON.stringify(json),
+    {status,headers:{'content-type':ctype}});
+const request = (source='douyin',type='hot', headers={}) => ({
+  method:'GET',url:'/api/standby?source='+source+'&type='+type+'&cache=true',
+  query:{source,type,cache:'true'},headers,
+});
+const run = async (handler, req=request()) => {
+  const headers=new Map();
+  const res={statusCode:200,setHeader:(k,v)=>headers.set(k.toLowerCase(),v),
+    end(v){this.body=v}};
+  await handler(req,res);
+  return {status:res.statusCode,headers,body:res.body,
+    json:res.body?JSON.parse(res.body):null};
+};
+
+test('only 7 exact public sources and known variants permit cloud fallback',()=>{
+  assert.equal(Object.keys(SOURCE_VARIANTS).length,7);
+  assert.equal(choosePublicVariant('douyin','hot'),'hot');
+  assert.equal(choosePublicVariant('baidu','realtime'),'realtime');
+  assert.equal(choosePublicVariant('baidu','hot'),null);
+  assert.equal(choosePublicVariant('xiaohongshu','hot'),null);
+  assert.equal(choosePublicVariant('../douyin','hot'),null);
+  assert.equal(choosePublicVariant('douyin',['hot','evil']),null);
+  assert.equal(snapshotUrl('douyin','hot'),
+    'https://github.com/wuaishare/DailyHotApi-Vercel/releases/download/cloud-standby-v1/douyin-hot.json');
+  assert.equal(snapshotUrl('xiaohongshu','hot'),null);
+  assert.equal(sanitizeUpstreamPathQuery(request().url,'douyin'),
+    'https://hotapi2.wuaishare.cn/douyin?type=hot&cache=true');
+});
+test('gateway routes cover approved sources but retain all other original upstream rewrites',()=>{
+  const cfg=JSON.parse(readFileSync(new URL('../vercel.json',import.meta.url)));
+  assert.equal(cfg.version,2);
+  assert.equal(cfg.rewrites.length,8);
+  for(const [source] of Object.entries(SOURCE_VARIANTS)){
+    assert.deepEqual(cfg.rewrites.find(x=>x.source==='/'+source),
+      {source:'/'+source,destination:'/api/standby?source='+source});
+  }
+  assert.deepEqual(cfg.rewrites.at(-1),
+    {source:'/:path*',destination:'https://hotapi2.wuaishare.cn/:path*'});
+  assert.ok(!cfg.rewrites.some(x=>x.source.includes('xiaohongshu')));
+  assert.equal(cfg.builds,undefined);
+});
+test('the seven bundled emergency snapshots are authentic schema-valid real API captures',()=>{
+  assert.equal(Object.keys(deployedSeed).length,7);
+  const actualCapturedAt = Date.now();
+  for(const [source,variant] of Object.entries(SOURCE_VARIANTS)){
+    const s=deployedSeed[source+'-'+variant+'.json'];
+    assert.ok(validSnapshot(s,source,variant,actualCapturedAt),source);
+    assert.ok(s.payload.data.length>=15,source);
+    assert.ok(s.payload.data.slice(0,15).every(x=>typeof x.title==='string' && x.title.trim()),source);
+  }
+});
+test('upstream healthy is preferred, response contract retained, no cloud read',async()=>{
+  const calls=[];
+  const handler=createStandbyHandler({clock:()=>current,fetchImpl:async(url,options)=>{
+    calls.push({url,options});return reply(body())}});
+  const res=await run(handler);
+  assert.equal(res.status,200);
+  assert.equal(res.json.data.length,25);
+  assert.equal(res.json.standby,undefined);
+  assert.equal(res.headers.get('x-hotapi-data-mode'),'upstream');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].url,'https://hotapi2.wuaishare.cn/douyin?type=hot&cache=true');
+  assert.equal(calls[0].options.headers.Authorization,undefined);
+  assert.equal(calls[0].options.headers.Cookie,undefined);
+});
+test('bt1 blackout: cloud release snapshot returns verified stale data with honest metadata',async()=>{
+  const urls=[];
+  const handler=createStandbyHandler({clock:()=>current,
+    fetchImpl:async(url)=>{urls.push(url);return urls.length===1?
+      reply({code:502},502):reply(makeSnapshot())}});
+  const res=await run(handler);
+  assert.equal(res.status,200);
+  assert.equal(res.json.data.length,25);
+  assert.equal(res.json.standby.active,true);
+  assert.equal(res.json.standby.mode,'offsite-snapshot');
+  assert.equal(res.json.standby.ageSeconds,300);
+  assert.equal(res.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.match(res.headers.get('warning'),/Stale/);
+  assert.match(urls[1],/github.com\/wuaishare\/DailyHotApi-Vercel\/releases\/download\/cloud-standby-v1\/douyin-hot.json/);
+});
+test('both home and Release inaccessible: verified bundled seed still works',async()=>{
+  const seed={'douyin-hot.json':makeSnapshot()};
+  const handler=createStandbyHandler({seed,clock:()=>current,fetchImpl:async()=>{
+    throw new TypeError('power outage or remote failure')}});
+  const res=await run(handler);
+  assert.equal(res.status,200);
+  assert.equal(res.json.data[0].title,'Ranked headline 0');
+  assert.equal(res.json.standby.mode,'offsite-snapshot');
+});
+test('failed cloud and bundled seed => explicit 503, never fabricate rank rows',async()=>{
+  const h=createStandbyHandler({seed:{},clock:()=>current,fetchImpl:async()=>reply({error:true},503)});
+  const r=await run(h);
+  assert.equal(r.status,503);
+  assert.equal(r.json.code,503);
+  assert.equal(r.headers.get('retry-after'),'60');
+});
+test('explicit upstream denials never fetch cloud backup',async()=>{
+  for(const status of [400,401,403,404,429]){
+    let n=0;
+    const handler=createStandbyHandler({clock:()=>current,
+      fetchImpl:async()=>{n++;return reply({code:status},status)}});
+    const res=await run(handler);
+    assert.equal(res.status,status);
+    assert.equal(n,1);
+    assert.equal(res.headers.has('x-hotapi-data-mode'),false);
+  }
+});
+test('unapproved variants, credentials and arbitrary sources never use cloud snapshot',async()=>{
+  for(const input of [request('baidu','hot'),request('xiaohongshu','hot'),
+    request('douyin','challenge'),request('douyin','hot',{authorization:'Bearer no'})]){
+    let n=0;
+    const r=await run(createStandbyHandler({clock:()=>current,
+      fetchImpl:async()=>{n++;return reply({code:502},502)}}),input);
+    assert.equal(r.status,input.query.source==='xiaohongshu'?404:503);
+    assert.equal(n,input.query.source==='xiaohongshu'?0:1);
+  }
+});
+test('corrupted/off-source Github asset is rejected, seed if valid',async()=>{
+  const poisoned={...makeSnapshot(),source:'other'};
+  const handler=createStandbyHandler({clock:()=>current,
+    seed:{'douyin-hot.json':makeSnapshot()},
+    fetchImpl:async(url)=>url.startsWith('https://hotapi2')?
+      reply({code:502},502):reply(poisoned)});
+  const r=await run(handler);
+  assert.equal(r.status,200);
+  assert.equal(r.json.standby.active,true);
+  assert.equal(validSnapshot(poisoned,'douyin','hot',current),false);
+});
+test('invalid poison without fallback becomes 503, not silent green',async()=>{
+  const invalid={...makeSnapshot(),payload:{...body(),data:[{title:'short'}]}};
+  assert.equal(validSnapshot(invalid,'douyin','hot',current),false);
+  const handler=createStandbyHandler({clock:()=>current,seed:{},
+    fetchImpl:async(url)=>url.startsWith('https://hotapi2')?
+      reply({code:502},502):reply(invalid)});
+  assert.equal((await run(handler)).status,503);
+});
+test('empty, too short, or missing-title data cannot become a capture',async()=>{
+  assert.equal(validPublicPayload('douyin',body()),true);
+  assert.equal(validPublicPayload('douyin',{...body(),data:[]}),false);
+  assert.equal(validPublicPayload('douyin',{...body(),data:[{title:'x'}]}),false);
+  assert.equal(validPublicPayload('douyin',{...body(),data:Array(25).fill({title:''})}),false);
+});
+test('snapshot capture rejects stale upstream and ensures actual metadata',async()=>{
+  const good=await captureSource('douyin',{now:()=>current,
+    fetchImpl:async()=>reply(body())});
+  assert.equal(good.schema,'hotapi-cloud-snapshot-v1');
+  assert.equal(good.source,'douyin');
+  assert.equal(validSnapshot(good,'douyin','hot',current),true);
+  const bad={...body(),updateTime:new Date(current-3600000*4).toISOString()};
+  await assert.rejects(captureSource('douyin',{now:()=>current,
+    fetchImpl:async()=>reply(bad)}),/not_fresh/);
+  await assert.rejects(captureSource('xiaohongshu',{now:()=>current,
+    fetchImpl:async()=>reply(body())}),/not_approved/);
+});
+test('seed generation requires all sources valid; no partial seed overwrite',async()=>{
+  const tmp=mkdtempSync(join(tmpdir(),'hotapi-standby-qa-'));
+  try {
+    await assert.rejects(captureAll({outDir:tmp,seedFile:join(tmp,'seed.js'),now:()=>current,
+      fetchImpl:async(url)=>url.includes('/weibo')?reply({code:500},500):reply(body())}),
+    /incomplete bundled fallback seed/);
+  }finally{rmSync(tmp,{recursive:true,force:true})}
+});
+test('public fallback is read-only, no HTTP method override or dynamic source',async()=>{
+  const calls=[];
+  const h=createStandbyHandler({clock:()=>current,fetchImpl:async(url)=>{
+    calls.push(url);return reply(body())}});
+  const rejected=await run(h,{...request(),method:'POST'});
+  assert.equal(rejected.status,405);
+  assert.equal(calls.length,0);
+  const no=await run(h,{...request(),query:{source:'../../admin'}});
+  assert.equal(no.status,404);
+  assert.equal(calls.length,0);
+});

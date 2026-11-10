@@ -6,8 +6,14 @@ const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const health = JSON.parse(readFileSync(new URL("../public/_hotapi-gateway/health.json", import.meta.url), "utf8"));
 
-test("only one fixed HTTPS origin; no untrusted redirect or dynamic forwarding", () => {
-  assert.deepEqual(config.rewrites, [{ source: "/:path*", destination: "https://hotapi2.wuaishare.cn/:path*" }]);
+test("seven fixed public standby routes; all remaining paths preserve the sole approved upstream", () => {
+  assert.equal(config.rewrites.length, 8);
+  for (const source of ['douyin','baidu','kuaishou','weibo','toutiao','qq-news','netease-news']) {
+    assert.deepEqual(config.rewrites.find(r=>r.source==='/' + source),
+      {source:'/' + source,destination:'/api/standby?source=' + source});
+  }
+  assert.deepEqual(config.rewrites.at(-1),
+    { source: "/:path*", destination: "https://hotapi2.wuaishare.cn/:path*" });
   assert.equal(config.version, 2);
   assert.equal(config.builds, undefined);
   assert.equal(config.routes, undefined);
