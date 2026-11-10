@@ -52,7 +52,7 @@ export function createStandbyHandler({
     // The live source retains precedence; do not forward bearer tokens,
     // cookies, arbitrary client URLs or untrusted forwarded-IP headers.
     let upstreamResponse;
-    const requestedPreviewFault = req.headers?.['x-hotapi-preview-fault'];
+    const requestedPreviewFault = req.query?.__standby_fault;
     const previewFaultMode = env.VERCEL_ENV === 'preview' &&
       env.HOTAPI_STANDBY_PREVIEW_FAULT === '1' &&
       ['upstream-502','all-remote-502','upstream-403'].includes(requestedPreviewFault)
