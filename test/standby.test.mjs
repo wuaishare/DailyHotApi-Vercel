@@ -50,6 +50,8 @@ test('only 7 exact public sources and known variants permit cloud fallback',()=>
   assert.equal(snapshotUrl('xiaohongshu','hot'),null);
   assert.equal(sanitizeUpstreamPathQuery(request().url,'douyin'),
     'https://hotapi2.wuaishare.cn/douyin?type=hot&cache=true');
+  assert.equal(sanitizeUpstreamPathQuery('/douyin?type=hot&__standby_fault=all-remote-502&cache=true','douyin'),
+    'https://hotapi2.wuaishare.cn/douyin?type=hot&cache=true');
 });
 test('gateway routes cover approved sources but retain all other original upstream rewrites',()=>{
   const cfg=JSON.parse(readFileSync(new URL('../vercel.json',import.meta.url)));
@@ -219,8 +221,13 @@ test('public fallback is read-only, no HTTP method override or dynamic source',a
   const calls=[];
   const h=createStandbyHandler({clock:()=>current,fetchImpl:async(url)=>{
     calls.push(url);return reply(body())}});
+  const preflight=await run(h,{...request(),method:'OPTIONS'});
+  assert.equal(preflight.status,204);
+  assert.equal(preflight.headers.get('access-control-allow-methods'),'GET, HEAD, OPTIONS');
+  assert.equal(calls.length,0);
   const rejected=await run(h,{...request(),method:'POST'});
   assert.equal(rejected.status,405);
+  assert.equal(rejected.headers.get('allow'),'GET, HEAD, OPTIONS');
   assert.equal(calls.length,0);
   const no=await run(h,{...request(),query:{source:'../../admin'}});
   assert.equal(no.status,404);

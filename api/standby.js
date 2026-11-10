@@ -13,6 +13,9 @@ const setCommonHeaders = (res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Expose-Headers',
     'X-HotAPI-Data-Mode, X-HotAPI-Standby-Age-Seconds, X-HotAPI-Standby-Captured-At');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
 };
 const send = (res, status, json, head = false) => {
   res.statusCode = status;
@@ -39,8 +42,13 @@ export function createStandbyHandler({
       res.setHeader('Cache-Control', 'no-store');
       return send(res, 404, {code:404, message:'unknown_public_source'});
     }
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Allow', 'GET, HEAD, OPTIONS');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return send(res, 204, {}, true);
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('Allow', 'GET, HEAD');
+      res.setHeader('Allow', 'GET, HEAD, OPTIONS');
       res.setHeader('Cache-Control', 'no-store');
       return send(res, 405, {code:405, message:'public_read_only'});
     }
