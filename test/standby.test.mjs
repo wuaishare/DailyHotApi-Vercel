@@ -88,18 +88,30 @@ test('upstream healthy is preferred, response contract retained, no cloud read',
   assert.equal(calls[0].options.headers.Authorization,undefined);
   assert.equal(calls[0].options.headers.Cookie,undefined);
 });
-test('preview-only explicit fault header exercises the deployed offsite path; production cannot',async()=>{
+test('preview-only explicit fault headers exercise release, bundle and denial paths; production cannot',async()=>{
   const calls=[];
-  const preview=createStandbyHandler({clock:()=>current,env:{VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'1'},fetchImpl:async(url)=>{calls.push(url);return reply(makeSnapshot())}});
+  const env={VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'1'};
+  const preview=createStandbyHandler({clock:()=>current,env,fetchImpl:async(url)=>{calls.push(url);return reply(makeSnapshot())}});
   const req={...request(),headers:{'x-hotapi-preview-fault':'upstream-502'}};
   const result=await run(preview,req);
   assert.equal(result.status,200);
   assert.equal(result.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
   assert.equal(calls.length,1);
   assert.match(calls[0],/github.com/);
-  for(const env of [{VERCEL_ENV:'production',HOTAPI_STANDBY_PREVIEW_FAULT:'1'},{VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'0'},{VERCEL_ENV:'preview'}]){
+  calls.length=0;
+  const bundle=await run(preview,{...req,headers:{'x-hotapi-preview-fault':'all-remote-502'}});
+  assert.equal(bundle.status,200);
+  assert.equal(bundle.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.equal(bundle.json.standby.active,true);
+  assert.equal(bundle.json.data.length,50);
+  assert.equal(calls.length,0); // neither bt1 nor GitHub was contacted
+  const denied=await run(preview,{...req,headers:{'x-hotapi-preview-fault':'upstream-403'}});
+  assert.equal(denied.status,403);
+  assert.equal(denied.headers.has('x-hotapi-data-mode'),false);
+  assert.equal(calls.length,0); // explicit 403 never bypasses via a snapshot
+  for(const safeEnv of [{VERCEL_ENV:'production',HOTAPI_STANDBY_PREVIEW_FAULT:'1'},{VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'0'},{VERCEL_ENV:'preview'}]){
     let count=0;
-    const handler=createStandbyHandler({env,clock:()=>current,fetchImpl:async()=>{count++;return reply(body())}});
+    const handler=createStandbyHandler({env:safeEnv,clock:()=>current,fetchImpl:async()=>{count++;return reply(body())}});
     const r=await run(handler,req);
     assert.equal(r.status,200);
     assert.equal(r.headers.get('x-hotapi-data-mode'),'upstream');

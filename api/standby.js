@@ -52,13 +52,16 @@ export function createStandbyHandler({
     // The live source retains precedence; do not forward bearer tokens,
     // cookies, arbitrary client URLs or untrusted forwarded-IP headers.
     let upstreamResponse;
-    const previewFaultSimulation = env.VERCEL_ENV === 'preview' &&
+    const requestedPreviewFault = req.headers?.['x-hotapi-preview-fault'];
+    const previewFaultMode = env.VERCEL_ENV === 'preview' &&
       env.HOTAPI_STANDBY_PREVIEW_FAULT === '1' &&
-      req.headers?.['x-hotapi-preview-fault'] === 'upstream-502';
+      ['upstream-502','all-remote-502','upstream-403'].includes(requestedPreviewFault)
+        ? requestedPreviewFault : null;
+    const previewFaultSimulation = previewFaultMode !== null;
     if (previewFaultSimulation) {
       // Test-only switch: exact branch-scoped Preview env + explicit header.
       // Vercel Production and Development cannot enter this path.
-      upstreamResponse = {status:502};
+      upstreamResponse = {status:previewFaultMode === 'upstream-403' ? 403 : 502};
     }
     try {
       if (!previewFaultSimulation) upstreamResponse = await fetchImpl(path, {
@@ -103,17 +106,19 @@ export function createStandbyHandler({
 
     const name = source + '-' + variant + '.json';
     let snapshot = null;
-    try {
-      const response = await fetchImpl(snapshotUrl(source, variant), {
-        method:'GET', headers:{Accept:'application/json',
-          'User-Agent':'hotapi-cloud-standby/1.0'},
-        redirect:'follow', signal:AbortSignal.timeout(offsiteTimeoutMs),
-      });
-      if (response.ok) {
-        const candidate = await parseBoundedJson(response);
-        if (validSnapshot(candidate, source, variant, clock())) snapshot = candidate;
-      }
-    } catch { /* An unreachable GitHub asset must not erase the bundled seed. */ }
+    if (previewFaultMode !== 'all-remote-502') {
+      try {
+        const response = await fetchImpl(snapshotUrl(source, variant), {
+          method:'GET', headers:{Accept:'application/json',
+            'User-Agent':'hotapi-cloud-standby/1.0'},
+          redirect:'follow', signal:AbortSignal.timeout(offsiteTimeoutMs),
+        });
+        if (response.ok) {
+          const candidate = await parseBoundedJson(response);
+          if (validSnapshot(candidate, source, variant, clock())) snapshot = candidate;
+        }
+      } catch { /* An unreachable GitHub asset must not erase the bundled seed. */ }
+    }
     if (!snapshot && validSnapshot(seed[name], source, variant, clock())) {
       snapshot = seed[name];
     }
