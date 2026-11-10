@@ -22,7 +22,7 @@ GitHub 云端 runner 每两小时调度 ops/capture-standby.mjs，校验真实�
 
 1. Draft PR 与源码/负例/真实快照种子完整测试通过；7条真实种子不可是假数据。
 2. 一次受保护 Vercel Preview 验证七条准确路由、原健康标记、/all、AI接口路径原样、真实 live JSON 契约。
-3. 只在 Preview 模拟 bt1 HTTP502/网络超时，确认 Release快照及内置种子双层保底；401/403及未知变体仍 fail-closed。
+3. 只在受保护 Preview 模拟 bt1 HTTP502/网络超时：测试头 x-hotapi-preview-fault: upstream-502 只有在 VERCEL_ENV=preview 且 HOTAPI_STANDBY_PREVIEW_FAULT=1 时生效；此环境变量只绑定当前 PR Preview 分支，Production 不存在。确认真实 Release 快照和内置种子两层保底；401/403及未知变体仍 fail-closed。
 4. GitHub云端 runner 的 Release 写权限、一次真实快照更新和公共下载均验收。不得停家庭服务做演练。
 5. 最后才合并并发布 master；正式回滚基线、CPU/函数请求、CDN访问、数据过期标签和生产域名收据必须检查。本 Draft 不等于已上线。
 

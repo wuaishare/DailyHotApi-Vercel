@@ -30,6 +30,7 @@ export function createStandbyHandler({
   fetchImpl = globalThis.fetch, seed = seedSnapshots,
   clock = () => Date.now(), upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
   offsiteTimeoutMs = OFFSITE_TIMEOUT_MS,
+  env = process.env,
 } = {}) {
   return async (req, res) => {
     setCommonHeaders(res);
@@ -51,8 +52,16 @@ export function createStandbyHandler({
     // The live source retains precedence; do not forward bearer tokens,
     // cookies, arbitrary client URLs or untrusted forwarded-IP headers.
     let upstreamResponse;
+    const previewFaultSimulation = env.VERCEL_ENV === 'preview' &&
+      env.HOTAPI_STANDBY_PREVIEW_FAULT === '1' &&
+      req.headers?.['x-hotapi-preview-fault'] === 'upstream-502';
+    if (previewFaultSimulation) {
+      // Test-only switch: exact branch-scoped Preview env + explicit header.
+      // Vercel Production and Development cannot enter this path.
+      upstreamResponse = {status:502};
+    }
     try {
-      upstreamResponse = await fetchImpl(path, {
+      if (!previewFaultSimulation) upstreamResponse = await fetchImpl(path, {
         method: head ? 'HEAD' : 'GET',
         headers: {Accept:'application/json', 'User-Agent':'hotapi-cloud-standby/1.0'},
         redirect: 'manual', signal: AbortSignal.timeout(upstreamTimeoutMs),

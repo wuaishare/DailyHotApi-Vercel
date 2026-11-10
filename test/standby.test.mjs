@@ -88,6 +88,24 @@ test('upstream healthy is preferred, response contract retained, no cloud read',
   assert.equal(calls[0].options.headers.Authorization,undefined);
   assert.equal(calls[0].options.headers.Cookie,undefined);
 });
+test('preview-only explicit fault header exercises the deployed offsite path; production cannot',async()=>{
+  const calls=[];
+  const preview=createStandbyHandler({clock:()=>current,env:{VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'1'},fetchImpl:async(url)=>{calls.push(url);return reply(makeSnapshot())}});
+  const req={...request(),headers:{'x-hotapi-preview-fault':'upstream-502'}};
+  const result=await run(preview,req);
+  assert.equal(result.status,200);
+  assert.equal(result.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.equal(calls.length,1);
+  assert.match(calls[0],/github.com/);
+  for(const env of [{VERCEL_ENV:'production',HOTAPI_STANDBY_PREVIEW_FAULT:'1'},{VERCEL_ENV:'preview',HOTAPI_STANDBY_PREVIEW_FAULT:'0'},{VERCEL_ENV:'preview'}]){
+    let count=0;
+    const handler=createStandbyHandler({env,clock:()=>current,fetchImpl:async()=>{count++;return reply(body())}});
+    const r=await run(handler,req);
+    assert.equal(r.status,200);
+    assert.equal(r.headers.get('x-hotapi-data-mode'),'upstream');
+    assert.equal(count,1);
+  }
+});
 test('bt1 blackout: cloud release snapshot returns verified stale data with honest metadata',async()=>{
   const urls=[];
   const handler=createStandbyHandler({clock:()=>current,
