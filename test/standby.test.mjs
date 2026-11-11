@@ -144,6 +144,49 @@ test('both home and Release inaccessible: verified bundled seed still works',asy
   assert.equal(res.json.data[0].title,'Ranked headline 0');
   assert.equal(res.json.standby.mode,'offsite-snapshot');
 });
+test('streamed oversized JSON without Content-Length is cancelled before fallback',async()=>{
+  let pulls=0, cancels=0, calls=0;
+  const stream=new ReadableStream({
+    pull(controller){
+      pulls++;
+      controller.enqueue(new Uint8Array(128*1024).fill(120));
+    },
+    cancel(){cancels++},
+  });
+  const handler=createStandbyHandler({clock:()=>current,fetchImpl:async()=>{
+    calls++;
+    if(calls===1) return new Response(stream,{status:200,
+      headers:{'content-type':'application/json'}});
+    return reply(makeSnapshot());
+  }});
+  const res=await run(handler);
+  assert.equal(res.status,200);
+  assert.equal(res.json.standby.active,true);
+  assert.equal(res.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.equal(calls,2);
+  assert.equal(cancels,1);
+  assert.ok(pulls<=12, 'never read the unlimited chunked stream');
+});
+test('dishonest oversized Content-Length is rejected before reading body',async()=>{
+  let pulls=0, calls=0;
+  const stream=new ReadableStream({
+    pull(controller){
+      pulls++;
+      controller.enqueue(new Uint8Array(128));
+    },
+  });
+  const handler=createStandbyHandler({clock:()=>current,fetchImpl:async()=>{
+    calls++;
+    if(calls===1) return new Response(stream,{status:200,headers:{
+      'content-type':'application/json','content-length':'1048577'}});
+    return reply(makeSnapshot());
+  }});
+  const res=await run(handler);
+  assert.equal(res.status,200);
+  assert.equal(res.json.standby.active,true);
+  assert.equal(calls,2);
+  assert.ok(pulls<=1,'large declared body was never consumed');
+});
 test('failed cloud and bundled seed => explicit 503, never fabricate rank rows',async()=>{
   const h=createStandbyHandler({seed:{},clock:()=>current,fetchImpl:async()=>reply({error:true},503)});
   const r=await run(h);
