@@ -33,3 +33,16 @@ test("gateway identity marker does not claim origin health", () => {
   assert.equal(health.upstreamHealthAttested, false);
   assert.equal(health.productionDomain, "hotapi.wuaishare.cn");
 });
+
+
+test("offsite cloud capture PR runs read-only; only master schedule/dispatch may upload Release assets", () => {
+  const wf = readFileSync(new URL("../.github/workflows/hotapi-offsite-standby.yml", import.meta.url), "utf8");
+  assert.match(wf, /pull_request:\s*\n\s+paths:/);
+  assert.match(wf, /permissions:\s*\n\s{2}contents: read/);
+  assert.match(wf, /verify-pr-cloud-capture:\s*\n\s+if: github.event_name == 'pull_request'\s*\n\s+permissions:\s*\n\s+contents: read/);
+  assert.match(wf, /persist-credentials: false/);
+  assert.match(wf, /github.ref == 'refs\/heads\/master'/);
+  assert.match(wf, /github.event_name == 'schedule' \|\| github.event_name == 'workflow_dispatch'/);
+  assert.match(wf, /refresh-public-snapshots:[\s\S]*?permissions:\s*\n\s+contents: write/);
+  assert.match(wf, /gh release upload "\$tag" "\$snapshot" --clobber/);
+});
