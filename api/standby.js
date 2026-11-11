@@ -117,24 +117,21 @@ export function createStandbyHandler({
     }
     try {
       if (!previewFaultSimulation) upstreamResponse = await fetchImpl(path, {
-        method: head ? 'HEAD' : 'GET',
+        // Validate the same bounded public JSON as GET; some providers reject
+        // upstream HEAD and a bare 200 cannot prove valid ranking content.
+        method: 'GET',
         headers: {Accept:'application/json', 'User-Agent':'hotapi-cloud-standby/1.0'},
         redirect: 'manual', signal: AbortSignal.timeout(upstreamTimeoutMs),
       });
     } catch { /* A network error is not a fabricated content response. */ }
 
     if (upstreamResponse && upstreamResponse.status === 200) {
-      if (head) {
-        res.setHeader('X-HotAPI-Data-Mode', 'upstream');
-        res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=30');
-        return send(res, 200, {}, true);
-      }
       const body = await parseBoundedJson(upstreamResponse).catch(() => null);
       if (body && (variant === null || validPublicPayload(source, body))) {
         if (variant !== null) reportLiveFreshness(res, body, clock());
         res.setHeader('X-HotAPI-Data-Mode', 'upstream');
         res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=30');
-        return send(res, 200, body);
+        return send(res, 200, body, head);
       }
     } else if (upstreamResponse &&
       upstreamResponse.status >= 400 && upstreamResponse.status < 500) {

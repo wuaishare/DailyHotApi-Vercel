@@ -16,7 +16,7 @@ GitHub 云端 runner 每两小时调度 ops/capture-standby.mjs，校验真实�
 
 降级响应保持原 JSON 结构，增加 standby.active=true、standby.mode=offsite-snapshot、standby.capturedAt、standby.sourceUpdatedAt、standby.ageSeconds；同时返回 X-HotAPI-Data-Mode、X-HotAPI-Standby-Captured-At、X-HotAPI-Standby-Age-Seconds 和 Warning:110。这是带来源时间的历史快照，绝不能把它当成实时采集。CDN仅短缓存30秒，bt1复活后自动重试实时数据。
 
-401/403/404/429 等明确拒绝一律不降级；小红书、私有/未知来源、不匹配的子榜单变体和 Authorization 请求一律不降级；不转发 cookie、认证头或用户指定代理源；非 GET/HEAD 不允许由本函数写入。
+401/403/404/429 等明确拒绝一律不降级；小红书、私有/未知来源、不匹配的子榜单变体和 Authorization 请求一律不降级；不转发 cookie、认证头或用户指定代理源；非 GET/HEAD 不允许由本函数写入。HEAD 为避免部分上游不支持 HEAD 或仅返回假健康 200，通过同一条受控 GET 路径执行完整的有界公开 JSON 验证与相同故障回退，只回传状态/响应头而不返回正文；OPTIONS 只本地应答、不访问上游。
 
 ## 上线前必须具备的验收
 

@@ -394,3 +394,43 @@ test('cloud capture never retries authorization denials or 429 rate limits',asyn
     assert.equal(captureExitCode(result,{requireAll:true}),1);
   } finally {rmSync(temp,{recursive:true,force:true});}
 });
+
+test('HEAD uses the same bounded GET validation, but never returns ranking bytes',async()=>{
+  const calls=[];
+  const h=createStandbyHandler({clock:()=>current,fetchImpl:async(url,options)=>{
+    calls.push({url,method:options.method});
+    return reply(body());
+  }});
+  const r=await run(h,{...request(),method:'HEAD'});
+  assert.equal(r.status,200);
+  assert.equal(r.body,'');
+  assert.equal(r.headers.get('x-hotapi-data-mode'),'upstream');
+  assert.deepEqual(calls.map(x=>x.method),['GET']);
+  assert.match(calls[0].url,/hotapi2\.wuaishare\.cn\/douyin/);
+});
+test('HEAD never treats damaged upstream 200 as healthy and never bypasses denial',async()=>{
+  const urls=[];
+  const h=createStandbyHandler({clock:()=>current,fetchImpl:async(url,opts)=>{
+    urls.push({url,method:opts.method});
+    return urls.length===1
+      ? reply('<html>not json</html>',200,'text/html')
+      : reply(makeSnapshot());
+  }});
+  const r=await run(h,{...request(),method:'HEAD'});
+  assert.equal(r.status,200);
+  assert.equal(r.body,'');
+  assert.equal(r.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.match(r.headers.get('warning'),/Stale/);
+  assert.equal(urls.length,2);
+  assert.ok(urls.every(x=>x.method==='GET'));
+  let deniedCalls=0;
+  const denied=createStandbyHandler({clock:()=>current,fetchImpl:async()=>{
+    deniedCalls++;
+    return reply({code:403},403);
+  }});
+  const refusal=await run(denied,{...request(),method:'HEAD'});
+  assert.equal(refusal.status,403);
+  assert.equal(refusal.body,'');
+  assert.equal(deniedCalls,1);
+  assert.equal(refusal.headers.has('x-hotapi-data-mode'),false);
+});
