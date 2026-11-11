@@ -252,6 +252,22 @@ test('snapshot capture rejects stale upstream and ensures actual metadata',async
   await assert.rejects(captureSource('xiaohongshu',{now:()=>current,
     fetchImpl:async()=>reply(body())}),/not_approved/);
 });
+test('cloud capture cancels an unlimited chunked body at the shared 1 MiB boundary',async()=>{
+  let pulls=0, cancels=0;
+  const stream=new ReadableStream({
+    pull(controller){
+      pulls++;
+      controller.enqueue(new Uint8Array(128*1024).fill(120));
+    },
+    cancel(){cancels++},
+  });
+  await assert.rejects(captureSource('douyin',{now:()=>current,
+    fetchImpl:async()=>new Response(stream,{status:200,headers:{
+      'content-type':'application/json',
+    }})}),/invalid_or_oversized/);
+  assert.equal(cancels,1);
+  assert.ok(pulls<=12, 'cannot read or buffer the unbounded upstream body');
+});
 test('seed generation requires all sources valid; no partial seed overwrite',async()=>{
   const tmp=mkdtempSync(join(tmpdir(),'hotapi-standby-qa-'));
   try {
