@@ -5,7 +5,7 @@
 import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {
-  SOURCE_VARIANTS, UPSTREAM, validPublicPayload, validSnapshot, MAX_BODY_BYTES,
+  SOURCE_VARIANTS, UPSTREAM, validPublicPayload, validSnapshot, parseBoundedJson,
 } from '../lib/standby-core.js';
 
 export const MAX_SOURCE_AGE_MS = 3 * 60 * 60 * 1000;
@@ -25,12 +25,10 @@ export async function captureSource(source, {
       !(response.headers.get('content-type') || '').includes('json')) {
     throw new Error('upstream_not_json_200');
   }
-  const body = await response.text();
-  if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
-    throw new Error('upstream_response_too_large');
-  }
-  let data;
-  try { data = JSON.parse(body); } catch { throw new Error('upstream_invalid_json'); }
+  // Share the same byte ceiling as the live Vercel fallback, including
+  // chunked responses without Content-Length. Reject before full buffering.
+  const data = await parseBoundedJson(response);
+  if (!data) throw new Error('upstream_invalid_or_oversized_json');
   if (!validPublicPayload(source, data)) throw new Error('invalid_public_ranking');
   const capturedAt = new Date(now()).toISOString();
   // A just-served cached document is not proof of a fresh scrape. Refuse
