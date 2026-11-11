@@ -25,7 +25,7 @@ async function boundedJson(response){
   for(;;){
    const x=await reader.read();if(x.done)break;
    total+=x.value.byteLength;
-   if(total>MAX_BODY_BYTES){await reader.cancel().catch(()=>{});return null;}
+   if(total>MAX_BODY_BYTES){void reader.cancel().catch(()=>{});return null;}
    chunks.push(x.value);
   }
   const bytes=new Uint8Array(total);let p=0;
