@@ -21,12 +21,35 @@ const send = (res, status, json, head = false) => {
   res.statusCode = status;
   res.end(head ? '' : JSON.stringify(json));
 };
+// Bound streamed bytes before allocation; Content-Length can be absent or false.
 const parseBoundedJson = async (response) => {
-  const size = Number(response.headers.get('content-length'));
-  if (Number.isFinite(size) && size > MAX_BODY_BYTES) return null;
-  const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > MAX_BODY_BYTES) return null;
-  try { return JSON.parse(text); } catch { return null; }
+  const advertised = response.headers.get('content-length');
+  if (advertised !== null) {
+    const size = Number(advertised);
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_BODY_BYTES) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+  }
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    try { return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')); }
+    catch { return null; }
+  } catch { return null; }
+  finally { reader.releaseLock(); }
 };
 
 export function createStandbyHandler({
