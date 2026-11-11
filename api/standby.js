@@ -20,7 +20,9 @@ const setCommonHeaders = (res) => {
 const send = (res, status, json, head = false) => {
   res.statusCode = status;
   res.end(head ? '' : JSON.stringify(json));
-}export function createStandbyHandler({
+};
+
+export function createStandbyHandler({
   fetchImpl = globalThis.fetch, seed = seedSnapshots,
   clock = () => Date.now(), upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
   offsiteTimeoutMs = OFFSITE_TIMEOUT_MS,
