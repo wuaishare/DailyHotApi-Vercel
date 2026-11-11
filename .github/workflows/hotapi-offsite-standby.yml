@@ -11,7 +11,10 @@ on:
       - '.github/workflows/hotapi-offsite-standby.yml'
       - 'ops/capture-standby.mjs'
       - 'ops/compare-release-snapshot.mjs'
+      - 'ops/publish-standby-release.sh'
       - 'test/standby-release-admission.test.mjs'
+      - 'test/standby-publish.test.mjs'
+      - 'test/gateway.test.mjs'
       - 'lib/standby-core.js'
       - 'api/standby.js'
       - 'test/standby.test.mjs'
@@ -93,43 +96,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=("$RUNNER_TEMP"/hotapi-standby/*.json)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No verified snapshot; preserving last cloud release"
-            exit 1
-          fi
-          tag=cloud-standby-v1
-          previous_dir="$RUNNER_TEMP/hotapi-standby-last-good"
-          mkdir -p "$previous_dir"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            # Fail closed if prior known-good assets cannot be read. Do not blindly
-            # overwrite a potentially newer snapshot with older cached data.
-            gh release download "$tag" --pattern '*.json' --dir "$previous_dir" --clobber
-          else
-            gh release create "$tag" --target "$GITHUB_SHA" \
-              --title "Public offsite standby snapshots" \
-              --notes "Verified public ranking snapshots; not an independent live collector." \
-              --latest=false
-          fi
-          updated=0
-          kept=0
-          for snapshot in "${files[@]}"; do
-            asset="$(basename "$snapshot")"
-            verdict="$(node ops/compare-release-snapshot.mjs "$snapshot" "$previous_dir/$asset")"
-            if [[ "$verdict" == KEEP ]]; then
-              echo "PRESERVED $asset (no newer upstream updateTime)"
-              ((kept+=1))
-              continue
-            fi
-            if [[ "$verdict" != PUBLISH ]]; then
-              echo "::error::Snapshot admission refused for $asset"
-              exit 1
-            fi
-            gh release upload "$tag" "$snapshot" --clobber
-            echo "PUBLISHED $asset"
-            ((updated+=1))
-          done
-          echo "Cloud assets updated=$updated preserved=$kept; no Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
+        run: bash ops/publish-standby-release.sh

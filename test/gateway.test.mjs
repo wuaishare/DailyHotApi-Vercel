@@ -44,7 +44,11 @@ test("offsite cloud capture PR runs read-only; only master schedule/dispatch may
   assert.match(wf, /github.ref == 'refs\/heads\/master'/);
   assert.match(wf, /github.event_name == 'schedule' \|\| github.event_name == 'workflow_dispatch'/);
   assert.match(wf, /refresh-public-snapshots:[\s\S]*?permissions:\s*\n\s+contents: write/);
-  assert.match(wf, /gh release upload "\$tag" "\$snapshot" --clobber/);
+  const publisher=readFileSync(new URL("../ops/publish-standby-release.sh",import.meta.url),"utf8");
+  assert.ok(wf.includes('run: bash ops/publish-standby-release.sh'));
+  assert.ok(publisher.includes('gh release upload "$tag" "$snapshot" --clobber'));
+  assert.ok(publisher.includes("gh release download \"$tag\" --pattern '*.json'"));
+  assert.ok(publisher.includes("refs/heads/master"));
 });
 
 test("PR cloud capture requires all seven; scheduled Release preserves partial verified subset",()=>{

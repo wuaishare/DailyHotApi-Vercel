@@ -29,13 +29,15 @@ test('invalid old asset can be repaired, but new invalid or stale snapshots fail
   assert.throws(()=>replacementDecision('douyin','hot',snapshot(-5,1),null,now),/unverified_incoming_snapshot/);
   assert.throws(()=>replacementDecision('douyin','realtime',snapshot(),null,now),/unapproved_release_asset/);
 });
-test('scheduled release must download existing assets and require an admission decision',()=>{
+test('scheduled publisher compares existing Release and never downgrades source time',()=>{
   const wf=readFileSync(new URL('../.github/workflows/hotapi-offsite-standby.yml',import.meta.url),'utf8');
-  assert.match(wf,/gh release download "\$tag" --pattern '\*\.json'/);
-  assert.match(wf,/verdict="\$\(node ops\/compare-release-snapshot\.mjs/);
-  assert.match(wf,/if \[\[ "\$verdict" == KEEP \]\]/);
-  assert.match(wf,/if \[\[ "\$verdict" != PUBLISH \]\]/);
-  assert.match(wf,/gh release upload "\$tag" "\$snapshot" --clobber/);
-  assert.match(wf,/refresh-public-snapshots:[\s\S]*?permissions:\s*\n\s+contents: write/);
-  assert.match(wf,/verify-pr-cloud-capture:[\s\S]*?contents: read/);
+  const publisher=readFileSync(new URL('../ops/publish-standby-release.sh',import.meta.url),'utf8');
+  assert.ok(wf.includes('run: bash ops/publish-standby-release.sh'));
+  assert.ok(publisher.includes("gh release download \"$tag\" --pattern '*.json'"));
+  assert.ok(publisher.includes('verdict="$(node ops/compare-release-snapshot.mjs'));
+  assert.ok(publisher.includes('if [[ "$verdict" == KEEP ]]'));
+  assert.ok(publisher.includes('if [[ "$verdict" != PUBLISH ]]'));
+  assert.ok(publisher.includes('gh release upload "$tag" "$snapshot" --clobber'));
+  assert.ok(publisher.includes('GITHUB_EVENT_NAME'));
+  assert.ok(publisher.includes('refs/heads/master'));
 });
