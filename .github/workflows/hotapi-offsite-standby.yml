@@ -10,6 +10,8 @@ on:
     paths:
       - '.github/workflows/hotapi-offsite-standby.yml'
       - 'ops/capture-standby.mjs'
+      - 'ops/compare-release-snapshot.mjs'
+      - 'test/standby-release-admission.test.mjs'
       - 'lib/standby-core.js'
       - 'api/standby.js'
       - 'test/standby.test.mjs'

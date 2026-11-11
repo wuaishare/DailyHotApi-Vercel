@@ -9,7 +9,7 @@ import {
   SOURCE_VARIANTS, choosePublicVariant, snapshotUrl, validPublicPayload,
   validSnapshot, sanitizeUpstreamPathQuery,
 } from '../lib/standby-core.js';
-import {captureAll, captureSource, captureExitCode} from '../ops/capture-standby.mjs';
+import {captureAll, captureSource, captureExitCode, retryableCaptureError} from '../ops/capture-standby.mjs';
 
 const current = Date.parse('2026-11-11T01:00:00Z');
 const body = (source = 'douyin') => ({
@@ -344,4 +344,53 @@ test('PR dry run fails on partial provider outage; scheduled refresh preserves v
   assert.equal(captureExitCode(partial),0);
   assert.equal(captureExitCode(none,{requireAll:true}),1);
   assert.equal(captureExitCode(none),1);
+});
+
+test('cloud capture retries one transient 5xx per source and still requires seven real sources',async()=>{
+  assert.equal(retryableCaptureError(new Error('upstream_http_503')),true);
+  assert.equal(retryableCaptureError(new Error('upstream_http_502')),true);
+  assert.equal(retryableCaptureError(Object.assign(new Error('fetch failed'),{name:'TypeError'})),true);
+  assert.equal(retryableCaptureError(Object.assign(new Error('timed out'),{name:'TimeoutError'})),true);
+  for(const code of [401,403,404,429]) {
+    assert.equal(retryableCaptureError(new Error('upstream_http_'+code)),false);
+  }
+  assert.equal(retryableCaptureError(new Error('upstream_not_json_200')),false);
+  assert.equal(retryableCaptureError(new Error('invalid_public_ranking')),false);
+  let netease=0, delays=0;
+  const temp=mkdtempSync(join(tmpdir(),'hotapi-capture-retry-'));
+  try {
+    const result=await captureAll({outDir:temp,now:()=>current,
+      sleepImpl:async ms=>{assert.equal(ms,750);delays++;},
+      fetchImpl:async url=>{
+        if(url.includes('/netease-news')) {
+          netease++;
+          if(netease===1) return reply({code:503},503);
+        }
+        return reply(body());
+      }});
+    assert.equal(netease,2);
+    assert.equal(delays,1);
+    assert.equal(result.written,7);
+    assert.deepEqual(result.skipped,[]);
+    assert.equal(captureExitCode(result,{requireAll:true}),0);
+  } finally {rmSync(temp,{recursive:true,force:true});}
+});
+test('cloud capture never retries authorization denials or 429 rate limits',async()=>{
+  let weibo=0, qq=0, delays=0;
+  const temp=mkdtempSync(join(tmpdir(),'hotapi-no-denial-retry-'));
+  try{
+    const result=await captureAll({outDir:temp,now:()=>current,
+      sleepImpl:async()=>{delays++;},
+      fetchImpl:async url=>{
+        if(url.includes('/weibo')) {weibo++;return reply({code:403},403);}
+        if(url.includes('/qq-news')) {qq++;return reply({code:429},429);}
+        return reply(body());
+      }});
+    assert.equal(weibo,1);
+    assert.equal(qq,1);
+    assert.equal(delays,0);
+    assert.equal(result.written,5);
+    assert.deepEqual(result.skipped,['qq-news','weibo']);
+    assert.equal(captureExitCode(result,{requireAll:true}),1);
+  } finally {rmSync(temp,{recursive:true,force:true});}
 });

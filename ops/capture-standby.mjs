@@ -21,8 +21,8 @@ export async function captureSource(source, {
     headers:{Accept:'application/json','User-Agent':'hotapi-cloud-snapshot-refresh/1.0'},
     redirect:'error', signal:AbortSignal.timeout(timeoutMs),
   });
-  if (response.status !== 200 ||
-      !(response.headers.get('content-type') || '').includes('json')) {
+  if (response.status !== 200) throw new Error('upstream_http_' + response.status);
+  if (!(response.headers.get('content-type') || '').includes('json')) {
     throw new Error('upstream_not_json_200');
   }
   // Share the same byte ceiling as the live Vercel fallback, including
@@ -46,9 +46,18 @@ export async function captureSource(source, {
   return result;
 }
 
+// A single bounded retry handles temporary remote failures; never repeat
+// explicit denial or rate-limit statuses, malformed public data or 200 HTML.
+export const retryableCaptureError = (error) => {
+  const message = String(error?.message || '');
+  return /^upstream_http_5[0-9][0-9]$/.test(message) ||
+    error?.name === 'TimeoutError' ||
+    (error?.name === 'TypeError' && /fetch failed|network|socket|ECONNRESET|ETIMEDOUT/i.test(message));
+};
 export async function captureAll({
   outDir, seedFile = null, fetchImpl = globalThis.fetch,
   now = () => Date.now(),
+  sleepImpl = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
 } = {}) {
   if (typeof outDir !== 'string' || !outDir) throw new Error('out-dir-required');
   await mkdir(outDir, {recursive:true, mode:0o700});
@@ -59,7 +68,18 @@ export async function captureAll({
   for (let start = 0; start < entries.length; start += 2) {
     await Promise.all(entries.slice(start, start + 2).map(async ([source, variant]) => {
       try {
-        const snapshot = await captureSource(source, {fetchImpl, now});
+        let snapshot;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            snapshot = await captureSource(source, {fetchImpl, now});
+            break;
+          } catch (error) {
+            if (attempt !== 0 || !retryableCaptureError(error)) throw error;
+            console.warn('SNAPSHOT_RETRY ' + source + ' ' +
+              String(error?.message || error).slice(0,100));
+            await sleepImpl(750);
+          }
+        }
         const name = source + '-' + variant + '.json';
         await writeFile(resolve(outDir, name), JSON.stringify(snapshot) + '\n',
           {encoding:'utf8', mode:0o600});
