@@ -20,6 +20,7 @@ on:
       - 'test/cloud-direct-admission.test.mjs'
       - 'api/standby.js'
       - 'test/standby.test.mjs'
+      - 'test/standby-native-http.test.mjs'
 
 # A PR must never receive the Release token's write permission.
 permissions:
