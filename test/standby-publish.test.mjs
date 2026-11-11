@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,
+  mkdtempSync,mkdirSync,writeFileSync,readFileSync,copyFileSync,readdirSync,rmSync,
 } from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -19,10 +19,10 @@ const sample=(source,variant,ageMin,captureMin)=>({
     data:Array.from({length:25},(_,i)=>({title:'Authentic ranked item '+i}))},
 });
 
-function runFakePublisher({branch='refs/heads/master',event='schedule',failDownload=false,releaseExists=true,failView=false}={}) {
+function runFakePublisher({branch='refs/heads/master',event='schedule',failDownload=false,releaseExists=true,failView=false,failReadback=false,ignoreUploaded=false}={}) {
   const dir=mkdtempSync(join(tmpdir(),'hotapi-release-sandbox-'));
-  const bin=join(dir,'bin'), incoming=join(dir,'hotapi-standby'), old=join(dir,'previous');
-  mkdirSync(bin);mkdirSync(incoming);mkdirSync(old);
+  const bin=join(dir,'bin'), incoming=join(dir,'hotapi-standby'), old=join(dir,'previous'), assets=join(dir,'release-assets');
+  mkdirSync(bin);mkdirSync(incoming);mkdirSync(old);mkdirSync(assets);
   const ghLog=join(dir,'gh.log'), summary=join(dir,'summary');
   const stage=(name,source,variant,newAge,newCapture,oldAge,oldCapture)=>{
     writeFileSync(join(incoming,name),JSON.stringify(sample(source,variant,newAge,newCapture)));
@@ -30,6 +30,7 @@ function runFakePublisher({branch='refs/heads/master',event='schedule',failDownl
   };
   stage('douyin-hot.json','douyin','hot',10,1,20,6);
   stage('baidu-realtime.json','baidu','realtime',10,1,5,2);
+  for(const file of readdirSync(old)) copyFileSync(join(old,file),join(assets,file));
   const fakeGh=`#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path');
 const [group,verb,...args]=process.argv.slice(2);
@@ -38,14 +39,22 @@ if(group!=='release')process.exit(7);
 if(verb==='view')process.exit(process.env.FAKE_FAIL_VIEW==='1'?7:(process.env.FAKE_HAS_RELEASE==='1'?0:1));
 if(verb==='create')process.exit(0);
 if(verb==='download'){
-  if(process.env.FAKE_FAIL_DOWNLOAD==='1')process.exit(7);
+  const pattern=args[args.indexOf('--pattern')+1];
+  if(process.env.FAKE_FAIL_DOWNLOAD==='1' ||
+     (pattern!=='*.json' && process.env.FAKE_FAIL_READBACK==='1'))process.exit(7);
   const dir=args[args.indexOf('--dir')+1];
   fs.mkdirSync(dir,{recursive:true});
-  for(const file of fs.readdirSync(process.env.FAKE_PREV_DIR))
-    fs.copyFileSync(path.join(process.env.FAKE_PREV_DIR,file),path.join(dir,file));
+  for(const file of fs.readdirSync(process.env.FAKE_ASSETS_DIR))
+    if(pattern==='*.json' || pattern===file)
+      fs.copyFileSync(path.join(process.env.FAKE_ASSETS_DIR,file),path.join(dir,file));
   process.exit(0);
 }
-if(verb==='upload')process.exit(0);
+if(verb==='upload'){
+  const from=args[1];
+  if(process.env.FAKE_IGNORE_UPLOAD!=='1')
+    fs.copyFileSync(from,path.join(process.env.FAKE_ASSETS_DIR,path.basename(from)));
+  process.exit(0);
+}
 process.exit(9);
 `;
   writeFileSync(join(bin,'gh'),fakeGh,{mode:0o755});
@@ -55,7 +64,8 @@ process.exit(9);
     GITHUB_REF:branch,GITHUB_EVENT_NAME:event,RUNNER_TEMP:dir,
     GITHUB_SHA:'0123456789abcdef0123456789abcdef01234567',
     GITHUB_STEP_SUMMARY:summary,FAKE_GH_LOG:ghLog,FAKE_PREV_DIR:old,
-    FAKE_HAS_RELEASE:releaseExists?'1':'0',FAKE_FAIL_VIEW:failView?'1':'0',FAKE_FAIL_DOWNLOAD:failDownload?'1':'0'};
+    FAKE_HAS_RELEASE:releaseExists?'1':'0',FAKE_FAIL_VIEW:failView?'1':'0',FAKE_FAIL_DOWNLOAD:failDownload?'1':'0',
+    FAKE_FAIL_READBACK:failReadback?'1':'0',FAKE_IGNORE_UPLOAD:ignoreUploaded?'1':'0',FAKE_ASSETS_DIR:assets};
   const result=spawnSync('bash',[script],{cwd:root,env,encoding:'utf8',timeout:30000});
   const calls=readFileSync(ghLog,{encoding:'utf8',flag:'a+'});
   const writtenSummary=readFileSync(summary,{encoding:'utf8',flag:'a+'});
@@ -96,4 +106,23 @@ test('missing or unreadable Release is not recreated or overwritten by cron',()=
     assert.match(calls,/release view cloud-standby-v1/);
     assert.doesNotMatch(calls,/release (create|download|upload)/);
   }
+});
+
+test('an acknowledged upload without matching remote bytes is not PUBLISHED',()=>{
+  const {result,calls,summary}=runFakePublisher({ignoreUploaded:true});
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/Cloud Release readback unverified/);
+  assert.match(calls,/release upload cloud-standby-v1/);
+  assert.match(calls,/release download cloud-standby-v1 --pattern douyin-hot.json/);
+  assert.doesNotMatch(result.stdout,/PUBLISHED douyin-hot.json/);
+  assert.equal(summary,'');
+});
+test('temporary readback network failure never retries the write or reports success',()=>{
+  const {result,calls,summary}=runFakePublisher({failReadback:true});
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/Cloud Release readback unverified/);
+  assert.equal((calls.match(/release upload cloud-standby-v1/g)||[]).length,1);
+  assert.equal((calls.match(/release download cloud-standby-v1 --pattern douyin-hot.json/g)||[]).length,3);
+  assert.doesNotMatch(result.stdout,/PUBLISHED douyin-hot.json/);
+  assert.equal(summary,'');
 });

@@ -8,7 +8,7 @@
 
 ## 云端更新，不消耗 Vercel 日部署额度
 
-GitHub 云端 runner 每两小时调度 ops/capture-standby.mjs，校验真实公开来源的 code=200、至少10条非空标题、最近3小时内原始 updateTime 后，把逐源 JSON 更新到该公开 GitHub 仓库 Release 标签 cloud-standby-v1。每条源独立更新，超时/403/空数据都保留最后一次有效资产，不用伪造排名。Release 更新只用 GitHub Actions 自带 contents:write 权限，不提交数据文件、不开 Git 分支、不新增 Vercel Token、不重新部署 Vercel。调度是尽力服务，不是严格2小时 SLA。
+GitHub 云端 runner 每两小时调度 ops/capture-standby.mjs，校验真实公开来源的 code=200、至少10条非空标题、最近3小时内原始 updateTime 后，把逐源 JSON 更新到该公开 GitHub 仓库 Release 标签 cloud-standby-v1。每条源独立更新，超时/403/空数据都保留最后一次有效资产，不用伪造排名。Release 更新只用 GitHub Actions 自带 contents:write 权限，不提交数据文件、不开 Git 分支、不新增 Vercel Token、不重新部署 Vercel。每次上传成功后必须从 Release 重新下载同名资产，最多进行三次有限只读重取，并与本次上传 JSON 做逐字节比对；未核实一致则该次 Job 失败，标记结果不确定，不能冒称已发布或自动重复上传。调度是尽力服务，不是严格2小时 SLA。
 
 ## 实时、云端快照和最终种子
 

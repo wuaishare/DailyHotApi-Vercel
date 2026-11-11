@@ -32,6 +32,10 @@ if ! gh release view "$tag" >/dev/null 2>&1; then
 fi
 # Fail closed if prior known-good assets cannot be read.
 gh release download "$tag" --pattern '*.json' --dir "$previous_dir" --clobber
+# Verify each successful upload against bytes read back from the public Release.
+# The upload response alone is not a durable data-integrity receipt.
+readback_dir="$RUNNER_TEMP/hotapi-standby-readback"
+mkdir -p "$readback_dir"
 updated=0
 kept=0
 for snapshot in "${files[@]}"; do
@@ -47,7 +51,23 @@ for snapshot in "${files[@]}"; do
     exit 1
   fi
   gh release upload "$tag" "$snapshot" --clobber
-  echo "PUBLISHED $asset"
+  # The CDN and Release API may briefly disagree following --clobber. Only
+  # retry bounded GETs, never the ambiguous write itself.
+  verified=0
+  for attempt in 1 2 3; do
+    rm -f -- "$readback_dir/$asset"
+    if gh release download "$tag" --pattern "$asset" --dir "$readback_dir" --clobber >/dev/null 2>&1 &&
+       cmp -s -- "$snapshot" "$readback_dir/$asset"; then
+      verified=1
+      break
+    fi
+    if (( attempt < 3 )); then sleep 1; fi
+  done
+  if (( verified != 1 )); then
+    echo "::error::Cloud Release readback unverified for $asset; upload outcome ambiguous, manual reconciliation required" >&2
+    exit 1
+  fi
+  echo "PUBLISHED $asset (remote bytes verified)"
   updated=$((updated+1))
 done
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
