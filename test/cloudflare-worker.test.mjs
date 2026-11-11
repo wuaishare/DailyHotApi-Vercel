@@ -76,3 +76,18 @@ test('no public data source or verified seed must fail rather than invent freshn
  const h=createOffsiteWorker({clock:()=>now,seed:{},fetchImpl:async()=>json({},502)});
  assert.equal((await h(request('/douyin'))).status,503);
 });
+
+test('human-friendly standby landing page is static and visibly historical',async()=>{
+ const h=createOffsiteWorker({clock:()=>now,fetchImpl:async()=>{throw Error('should-not-fetch');}});
+ const r=await h(request('/'));
+ assert.equal(r.status,200);
+ const html=await r.text();
+ assert.match(html,/吾爱热榜 · 云端应急看板/);
+ assert.match(html,/历史快照，不是实时热搜/);
+ assert.match(html,/grid-template-columns/);
+ assert.match(html,/netease-news/);
+ assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+ const head=await h(request('/','HEAD'));
+ assert.equal(head.status,200);
+ assert.equal(await head.text(),'');
+});

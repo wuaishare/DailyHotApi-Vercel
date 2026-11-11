@@ -1,5 +1,6 @@
 // Independent Cloudflare last-good reader; NEVER contacts the home API,
 // writes Release or obtains provider credentials. Staging only.
+import {dashboardHtml} from './dashboard.js';
 import seeds from '../lib/standby-seed.js';
 import {SOURCE_VARIANTS,choosePublicVariant,validSnapshot,
  snapshotUrl,snapshotAgeSeconds,MAX_BODY_BYTES} from '../lib/standby-core.js';
@@ -38,6 +39,15 @@ export function createOffsiteWorker({fetchImpl=globalThis.fetch,
  seed=seeds,clock=()=>Date.now(),timeoutMs=3000}={}){
  return async request=>{
   const url=new URL(request.url),method=request.method;
+  if(url.pathname==='/'&&(method==='GET'||method==='HEAD'))
+   return new Response(method==='HEAD'?null:dashboardHtml,{
+    status:200,headers:{
+     'Content-Type':'text/html; charset=utf-8',
+     'Cache-Control':'public, max-age=60',
+     'X-Content-Type-Options':'nosniff',
+     'Referrer-Policy':'no-referrer',
+     'Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    }});
   if(url.pathname==='/health'&&method==='GET')
    return send(200,{ok:true,service:'wuaihot-offsite-standby',
     availability:'historical-public-snapshots-only',
