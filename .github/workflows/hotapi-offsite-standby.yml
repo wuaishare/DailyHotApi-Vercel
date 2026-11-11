@@ -1,0 +1,102 @@
+name: Offsite standby public snapshots
+# GitHub cloud runner, not the household M4 or bt1. No Vercel deploy/Token.
+on:
+  schedule:
+    - cron: '19 */2 * * *'
+  workflow_dispatch:
+  # Exercise actual GitHub-hosted network capture before this Draft is merged.
+  # No Release writes, production deploys or extra credentials on PR events.
+  pull_request:
+    paths:
+      - '.github/workflows/hotapi-offsite-standby.yml'
+      - 'ops/capture-standby.mjs'
+      - 'ops/compare-release-snapshot.mjs'
+      - 'ops/publish-standby-release.sh'
+      - 'test/standby-release-admission.test.mjs'
+      - 'test/standby-publish.test.mjs'
+      - 'test/gateway.test.mjs'
+      - 'lib/standby-core.js'
+      - 'lib/cloud-direct-admission.js'
+      - 'test/cloud-direct-admission.test.mjs'
+      - 'api/standby.js'
+      - 'test/standby.test.mjs'
+      - 'test/standby-native-http.test.mjs'
+
+# A PR must never receive the Release token's write permission.
+permissions:
+  contents: read
+
+jobs:
+  verify-pr-cloud-capture:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Validate public capture contracts
+        run: npm test
+      - name: Cloud Runner capture dry run, never publish artifacts
+        run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby" --require-all
+      - name: Read-only comparison with real public Release snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/hotapi-standby/*.json)
+          if (( ${#files[@]} != 7 )); then
+            echo "::error::Expected seven captured sources for PR admission"
+            exit 1
+          fi
+          old_dir="$RUNNER_TEMP/hotapi-standby-public-last-good"
+          mkdir -p "$old_dir"
+          for incoming in "${files[@]}"; do
+            name="$(basename "$incoming")"
+            curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 25 \
+              --output "$old_dir/$name" \
+              "https://github.com/wuaishare/DailyHotApi-Vercel/releases/download/cloud-standby-v1/$name"
+            decision="$(node ops/compare-release-snapshot.mjs "$incoming" "$old_dir/$name")"
+            if [[ "$decision" != PUBLISH && "$decision" != KEEP ]]; then
+              echo "::error::Unrecognized release admission decision"
+              exit 1
+            fi
+            echo "DRYRUN_ADMISSION $name $decision"
+          done
+
+  refresh-public-snapshots:
+    # GitHub schedule/dispatch are default-branch events. A PR can only read.
+    if: >-
+      github.repository == 'wuaishare/DailyHotApi-Vercel' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: write
+    concurrency:
+      group: hotapi-standby-release-assets
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Validate public capture and fallback source contracts
+        run: npm test
+      - name: Capture verified live public rankings
+        run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby"
+      - name: Publish valid Release assets, never a Vercel deployment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash ops/publish-standby-release.sh

@@ -3,6 +3,34 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/douyin",
+      "destination": "/api/standby?source=douyin"
+    },
+    {
+      "source": "/baidu",
+      "destination": "/api/standby?source=baidu"
+    },
+    {
+      "source": "/kuaishou",
+      "destination": "/api/standby?source=kuaishou"
+    },
+    {
+      "source": "/weibo",
+      "destination": "/api/standby?source=weibo"
+    },
+    {
+      "source": "/toutiao",
+      "destination": "/api/standby?source=toutiao"
+    },
+    {
+      "source": "/qq-news",
+      "destination": "/api/standby?source=qq-news"
+    },
+    {
+      "source": "/netease-news",
+      "destination": "/api/standby?source=netease-news"
+    },
+    {
       "source": "/:path*",
       "destination": "https://hotapi2.wuaishare.cn/:path*"
     }

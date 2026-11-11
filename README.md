@@ -2,7 +2,14 @@
 
 Official hostname: **`hotapi.wuaishare.cn`**. Vercel project: **`hotapi`**.
 
-This repository defines the edge-facing **gateway**, not an independently running scraper. It forwards the incoming URL path and query to the maintained `hotapi2.wuaishare.cn` service (currently bt1), preserving the modern API routes. No legacy `dailyhot-api@2.0.6` process, build script, or stale response data is used. **If bt1 or hotapi2 is down, this gateway is also down.**
+The **current production** deployment is only a Vercel rewrite gateway to `hotapi2.wuaishare.cn` (household bt1). It is **not** an independent scraper and a household power failure currently breaks its API. This branch introduces an explicitly scoped **offsite snapshot fallback for seven verified public rankings**, backed by GitHub Release assets and a real-data snapshot bundled in the Vercel Function. Other API routes still depend on bt1. **Until the PR passes Preview/CI and is published, the production gateway is still only a reverse proxy.**
+
+## Planned household-outage standby (not yet deployed)
+
+- The original bt1 API wins whenever it is healthy. On timeout, network failure or 5xx, only seven approved public routes can return the last verified offsite snapshot; no private or unsupported source is silently substituted.
+- A GitHub-hosted scheduled workflow refreshes public Release assets every two hours when bt1 is reachable. Release asset updates require no new Vercel deployment or user-created token. A fixed real-data bundle is retained if both bt1 and GitHub fail.
+- Offline data carries `standby.active`, `sourceUpdatedAt`, `ageSeconds` and explicit HTTP stale headers. A historical snapshot is **not** continued live collection. Outage-time live scraping on independent cloud infrastructure is a separate later phase.
+- Existing `/all`, AI and other endpoints continue their original bt1 rewrite and are **not** yet offline-capable. Exact rollout, costs, WAF boundaries, fault tests and rollback are documented in [ops/offsite-standby-runbook.md](ops/offsite-standby-runbook.md).
 
 ## Deploy and verify
 
