@@ -22,15 +22,16 @@ fi
 tag=cloud-standby-v1
 previous_dir="$RUNNER_TEMP/hotapi-standby-last-good"
 mkdir -p "$previous_dir"
-if gh release view "$tag" >/dev/null 2>&1; then
-  # Fail closed if prior known-good assets cannot be read.
-  gh release download "$tag" --pattern '*.json' --dir "$previous_dir" --clobber
-else
-  gh release create "$tag" --target "$GITHUB_SHA" \
-    --title "Public offsite standby snapshots" \
-    --notes "Verified public ranking snapshots; not an independent live collector." \
-    --latest=false
+# The public Release and its seven last-good assets already exist. An
+# unsuccessful view can mean 404, denied permissions or transient GitHub API
+# failure; never reinterpret it as permission to create a different Release.
+# Initial bootstrap is a separate reviewed operation, not a cron side effect.
+if ! gh release view "$tag" >/dev/null 2>&1; then
+  echo "::error::Cannot verify existing cloud Release; refusing create/upload" >&2
+  exit 1
 fi
+# Fail closed if prior known-good assets cannot be read.
+gh release download "$tag" --pattern '*.json' --dir "$previous_dir" --clobber
 updated=0
 kept=0
 for snapshot in "${files[@]}"; do

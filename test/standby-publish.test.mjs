@@ -19,7 +19,7 @@ const sample=(source,variant,ageMin,captureMin)=>({
     data:Array.from({length:25},(_,i)=>({title:'Authentic ranked item '+i}))},
 });
 
-function runFakePublisher({branch='refs/heads/master',event='schedule',failDownload=false,releaseExists=true}={}) {
+function runFakePublisher({branch='refs/heads/master',event='schedule',failDownload=false,releaseExists=true,failView=false}={}) {
   const dir=mkdtempSync(join(tmpdir(),'hotapi-release-sandbox-'));
   const bin=join(dir,'bin'), incoming=join(dir,'hotapi-standby'), old=join(dir,'previous');
   mkdirSync(bin);mkdirSync(incoming);mkdirSync(old);
@@ -35,7 +35,7 @@ const fs=require('node:fs'),path=require('node:path');
 const [group,verb,...args]=process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_GH_LOG,[group,verb,...args].join(' ')+'\\n');
 if(group!=='release')process.exit(7);
-if(verb==='view')process.exit(process.env.FAKE_HAS_RELEASE==='1'?0:1);
+if(verb==='view')process.exit(process.env.FAKE_FAIL_VIEW==='1'?7:(process.env.FAKE_HAS_RELEASE==='1'?0:1));
 if(verb==='create')process.exit(0);
 if(verb==='download'){
   if(process.env.FAKE_FAIL_DOWNLOAD==='1')process.exit(7);
@@ -55,7 +55,7 @@ process.exit(9);
     GITHUB_REF:branch,GITHUB_EVENT_NAME:event,RUNNER_TEMP:dir,
     GITHUB_SHA:'0123456789abcdef0123456789abcdef01234567',
     GITHUB_STEP_SUMMARY:summary,FAKE_GH_LOG:ghLog,FAKE_PREV_DIR:old,
-    FAKE_HAS_RELEASE:releaseExists?'1':'0',FAKE_FAIL_DOWNLOAD:failDownload?'1':'0'};
+    FAKE_HAS_RELEASE:releaseExists?'1':'0',FAKE_FAIL_VIEW:failView?'1':'0',FAKE_FAIL_DOWNLOAD:failDownload?'1':'0'};
   const result=spawnSync('bash',[script],{cwd:root,env,encoding:'utf8',timeout:30000});
   const calls=readFileSync(ghLog,{encoding:'utf8',flag:'a+'});
   const writtenSummary=readFileSync(summary,{encoding:'utf8',flag:'a+'});
@@ -85,5 +85,15 @@ test('non-default branch or PR event cannot call privileged publisher',()=>{
     assert.equal(result.status,2);
     assert.match(result.stderr,/restricted to default-branch/);
     assert.equal(calls,'');
+  }
+});
+
+test('missing or unreadable Release is not recreated or overwritten by cron',()=>{
+  for(const options of [{releaseExists:false},{failView:true}]){
+    const {result,calls}=runFakePublisher(options);
+    assert.notEqual(result.status,0,'must refuse release view failure');
+    assert.match(result.stderr,/Cannot verify existing cloud Release/);
+    assert.match(calls,/release view cloud-standby-v1/);
+    assert.doesNotMatch(calls,/release (create|download|upload)/);
   }
 });
