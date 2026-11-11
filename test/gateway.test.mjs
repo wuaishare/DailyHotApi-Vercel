@@ -52,3 +52,16 @@ test("PR cloud capture requires all seven; scheduled Release preserves partial v
   assert.ok(wf.includes('run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby" --require-all'));
   assert.match(wf,/name: Capture verified live public rankings\s*\n\s*run: node ops\/capture-standby\.mjs --out-dir "\$RUNNER_TEMP\/hotapi-standby"\s*\n/);
 });
+
+test("cloud PR validates real public Release readback without write credentials",()=>{
+  const wf=readFileSync(new URL("../.github/workflows/hotapi-offsite-standby.yml",import.meta.url),"utf8");
+  assert.ok(wf.includes('name: Read-only comparison with real public Release snapshots'));
+  assert.ok(wf.includes('curl --fail --silent --show-error --location'));
+  assert.ok(wf.includes('https://github.com/wuaishare/DailyHotApi-Vercel/releases/download/cloud-standby-v1/'));
+  assert.ok(wf.includes('decision="$(node ops/compare-release-snapshot.mjs'));
+  assert.ok(wf.includes('DRYRUN_ADMISSION $name $decision'));
+  const pr=wf.slice(wf.indexOf('  verify-pr-cloud-capture:'),wf.indexOf('  refresh-public-snapshots:'));
+  assert.ok(pr.includes('contents: read'));
+  assert.ok(!pr.includes('GH_TOKEN:'));
+  assert.ok(!pr.includes('gh release upload'));
+});

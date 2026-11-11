@@ -38,6 +38,31 @@ jobs:
         run: npm test
       - name: Cloud Runner capture dry run, never publish artifacts
         run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby" --require-all
+      - name: Read-only comparison with real public Release snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/hotapi-standby/*.json)
+          if (( ${#files[@]} != 7 )); then
+            echo "::error::Expected seven captured sources for PR admission"
+            exit 1
+          fi
+          old_dir="$RUNNER_TEMP/hotapi-standby-public-last-good"
+          mkdir -p "$old_dir"
+          for incoming in "${files[@]}"; do
+            name="$(basename "$incoming")"
+            curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 25 \
+              --output "$old_dir/$name" \
+              "https://github.com/wuaishare/DailyHotApi-Vercel/releases/download/cloud-standby-v1/$name"
+            decision="$(node ops/compare-release-snapshot.mjs "$incoming" "$old_dir/$name")"
+            if [[ "$decision" != PUBLISH && "$decision" != KEEP ]]; then
+              echo "::error::Unrecognized release admission decision"
+              exit 1
+            fi
+            echo "DRYRUN_ADMISSION $name $decision"
+          done
 
   refresh-public-snapshots:
     # GitHub schedule/dispatch are default-branch events. A PR can only read.
