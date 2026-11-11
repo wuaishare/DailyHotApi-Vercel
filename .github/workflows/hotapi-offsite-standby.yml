@@ -35,7 +35,7 @@ jobs:
       - name: Validate public capture contracts
         run: npm test
       - name: Cloud Runner capture dry run, never publish artifacts
-        run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby"
+        run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby" --require-all
 
   refresh-public-snapshots:
     # GitHub schedule/dispatch are default-branch events. A PR can only read.

@@ -46,3 +46,9 @@ test("offsite cloud capture PR runs read-only; only master schedule/dispatch may
   assert.match(wf, /refresh-public-snapshots:[\s\S]*?permissions:\s*\n\s+contents: write/);
   assert.match(wf, /gh release upload "\$tag" "\$snapshot" --clobber/);
 });
+
+test("PR cloud capture requires all seven; scheduled Release preserves partial verified subset",()=>{
+  const wf=readFileSync(new URL("../.github/workflows/hotapi-offsite-standby.yml",import.meta.url),"utf8");
+  assert.ok(wf.includes('run: node ops/capture-standby.mjs --out-dir "$RUNNER_TEMP/hotapi-standby" --require-all'));
+  assert.match(wf,/name: Capture verified live public rankings\s*\n\s*run: node ops\/capture-standby\.mjs --out-dir "\$RUNNER_TEMP\/hotapi-standby"\s*\n/);
+});

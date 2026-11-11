@@ -9,7 +9,7 @@ import {
   SOURCE_VARIANTS, choosePublicVariant, snapshotUrl, validPublicPayload,
   validSnapshot, sanitizeUpstreamPathQuery,
 } from '../lib/standby-core.js';
-import {captureAll, captureSource} from '../ops/capture-standby.mjs';
+import {captureAll, captureSource, captureExitCode} from '../ops/capture-standby.mjs';
 
 const current = Date.parse('2026-11-11T01:00:00Z');
 const body = (source = 'douyin') => ({
@@ -332,4 +332,16 @@ test('public fallback is read-only, no HTTP method override or dynamic source',a
   const no=await run(h,{...request(),query:{source:'../../admin'}});
   assert.equal(no.status,404);
   assert.equal(calls.length,0);
+});
+
+test('PR dry run fails on partial provider outage; scheduled refresh preserves verified subset',()=>{
+  const all={approved:7,written:7,skipped:[]};
+  const partial={approved:7,written:6,skipped:['weibo']};
+  const none={approved:7,written:0,skipped:Object.keys(SOURCE_VARIANTS)};
+  assert.equal(captureExitCode(all,{requireAll:true}),0);
+  assert.equal(captureExitCode(all),0);
+  assert.equal(captureExitCode(partial,{requireAll:true}),1);
+  assert.equal(captureExitCode(partial),0);
+  assert.equal(captureExitCode(none,{requireAll:true}),1);
+  assert.equal(captureExitCode(none),1);
 });

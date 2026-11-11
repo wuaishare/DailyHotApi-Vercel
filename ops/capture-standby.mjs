@@ -89,17 +89,27 @@ export async function captureAll({
   console.log('SNAPSHOT_SUMMARY ' + JSON.stringify(report));
   return report;
 }
+// A PR requires every approved source; production refresh keeps valid assets on partial failures.
+export const captureExitCode = (report, {requireAll = false} = {}) =>
+  !report || report.written < 1 ||
+    (requireAll && (report.written !== report.approved ||
+      report.skipped?.length > 0)) ? 1 : 0;
 if (process.argv[1] && import.meta.url === new URL('file://' + resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const dirFlag = args.indexOf('--out-dir');
   const seedFlag = args.indexOf('--seed-file');
   if (dirFlag < 0 || !args[dirFlag + 1]) {
-    console.error('Usage: capture-standby.mjs --out-dir DIR [--seed-file FILE]');
+    console.error('Usage: capture-standby.mjs --out-dir DIR [--seed-file FILE] [--require-all]');
     process.exitCode = 2;
   } else {
     captureAll({outDir:args[dirFlag + 1],
       seedFile:seedFlag >= 0 ? args[seedFlag + 1] : null}).then(result => {
-      if (!result.written) process.exitCode = 1;
+      const requireAll = args.includes('--require-all');
+      if (captureExitCode(result, {requireAll}) !== 0) {
+        console.error('SNAPSHOT_CAPTURE_INCOMPLETE ' +
+          JSON.stringify({...result, requireAll}));
+        process.exitCode = 1;
+      }
       if (result.skipped.length && process.env.GITHUB_ACTIONS) {
         console.warn('::warning::Partial offsite snapshot refresh: ' +
           result.skipped.join(', '));
