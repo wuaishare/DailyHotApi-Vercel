@@ -234,6 +234,47 @@ test('invalid poison without fallback becomes 503, not silent green',async()=>{
       reply({code:502},502):reply(invalid)});
   assert.equal((await run(handler)).status,503);
 });
+test('tail rows are validated, not just first ten ranked headlines',async()=>{
+  const corrupted={...body(),data:body().data.map((item,i)=>
+    i===24?{...item,title:'   '}:item)};
+  assert.equal(validPublicPayload('douyin',corrupted),false);
+  let calls=0;
+  const h=createStandbyHandler({clock:()=>current,fetchImpl:async()=>{
+    calls++;
+    return calls===1?reply(corrupted):reply(makeSnapshot());
+  }});
+  const res=await run(h);
+  assert.equal(calls,2);
+  assert.equal(res.status,200);
+  assert.equal(res.headers.get('x-hotapi-data-mode'),'offsite-snapshot');
+  assert.equal(res.json.standby.active,true);
+});
+test('upstream 200 preserves data but discloses stale or unverified times',async()=>{
+  for(const [updated,expected,warning,seconds] of [
+    [new Date(current-4*3600000).toISOString(),'stale','110',14400],
+    [undefined,'unverified','199',null],
+    [new Date(current+5*60000).toISOString(),'future','199',null],
+    [new Date(current-600000).toISOString(),'recent',null,600],
+  ]){
+    let calls=0;
+    const payload={...body(),updateTime:updated};
+    const h=createStandbyHandler({clock:()=>current,fetchImpl:async()=>{
+      calls++;return reply(payload);
+    }});
+    const res=await run(h);
+    assert.equal(res.status,200);
+    assert.equal(calls,1,'stale upstream is kept, not replaced with older cloud data');
+    assert.equal(res.headers.get('x-hotapi-data-mode'),'upstream');
+    assert.equal(res.headers.get('x-hotapi-upstream-freshness'),expected);
+    assert.equal(res.json.standby,undefined);
+    if(warning) assert.ok(res.headers.get('warning')?.startsWith(warning+' '));
+    else assert.equal(res.headers.has('warning'),false);
+    if(seconds!==null)
+      assert.equal(res.headers.get('x-hotapi-upstream-data-age-seconds'),String(seconds));
+    else assert.equal(res.headers.has('x-hotapi-upstream-data-age-seconds'),false);
+    assert.match(res.headers.get('access-control-expose-headers'),/X-HotAPI-Upstream-Freshness/);
+  }
+});
 test('empty, too short, or missing-title data cannot become a capture',async()=>{
   assert.equal(validPublicPayload('douyin',body()),true);
   assert.equal(validPublicPayload('douyin',{...body(),data:[]}),false);

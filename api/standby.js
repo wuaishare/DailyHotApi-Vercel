@@ -7,12 +7,33 @@ import {
 const UPSTREAM_TIMEOUT_MS = 4000;
 const OFFSITE_TIMEOUT_MS = 3000;
 const JSON_TYPE = 'application/json; charset=utf-8';
+const UPSTREAM_RECENT_MS = 3 * 60 * 60 * 1000;
+const UPSTREAM_MAX_FUTURE_MS = 2 * 60 * 1000;
+const reportLiveFreshness = (res, payload, now) => {
+  const updated = typeof payload?.updateTime === 'string' ?
+    Date.parse(payload.updateTime) : NaN;
+  const ageMs = now - updated;
+  const freshness = !Number.isFinite(ageMs) ? 'unverified' :
+    ageMs < -UPSTREAM_MAX_FUTURE_MS ? 'future' :
+    ageMs > UPSTREAM_RECENT_MS ? 'stale' : 'recent';
+  res.setHeader('X-HotAPI-Upstream-Freshness', freshness);
+  if (Number.isFinite(ageMs) && ageMs >= 0) {
+    res.setHeader('X-HotAPI-Upstream-Data-Age-Seconds',
+      String(Math.floor(ageMs / 1000)));
+  }
+  if (freshness === 'stale') {
+    res.setHeader('Warning', '110 - "Response is Stale"');
+  } else if (freshness !== 'recent') {
+    res.setHeader('Warning', '199 - "Upstream source time unverified"');
+  }
+};
 const setCommonHeaders = (res) => {
   res.setHeader('Content-Type', JSON_TYPE);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Expose-Headers',
-    'X-HotAPI-Data-Mode, X-HotAPI-Standby-Age-Seconds, X-HotAPI-Standby-Captured-At');
+    'X-HotAPI-Data-Mode, X-HotAPI-Standby-Age-Seconds, X-HotAPI-Standby-Captured-At, ' +
+    'X-HotAPI-Upstream-Freshness, X-HotAPI-Upstream-Data-Age-Seconds');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Max-Age', '86400');
@@ -110,6 +131,7 @@ export function createStandbyHandler({
       }
       const body = await parseBoundedJson(upstreamResponse).catch(() => null);
       if (body && (variant === null || validPublicPayload(source, body))) {
+        if (variant !== null) reportLiveFreshness(res, body, clock());
         res.setHeader('X-HotAPI-Data-Mode', 'upstream');
         res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=30');
         return send(res, 200, body);
