@@ -16,6 +16,8 @@ on:
       - 'test/standby-publish.test.mjs'
       - 'test/gateway.test.mjs'
       - 'lib/standby-core.js'
+      - 'lib/cloud-direct-admission.js'
+      - 'test/cloud-direct-admission.test.mjs'
       - 'api/standby.js'
       - 'test/standby.test.mjs'
 
